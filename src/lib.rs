@@ -4,79 +4,92 @@ pub enum Token {
     Number(u32),
 }
 
-pub fn lexer(input: &str) -> Vec<Token> {
-    let input = input.trim();
-    let mut tokens = Vec::new();
-    let mut temp = String::new();
-
-    for element in input.chars() {
-        if element.is_ascii_digit() {
-            temp.push(element);
-            continue;
-        }
-
-        match element {
-            '+' => {
-                if !temp.is_empty() {
-                    let num = temp.parse::<u32>().unwrap();
-                    temp.clear();
-                    tokens.push(Token::Number(num));
-                }
-                tokens.push(Token::Plus);
-            }
-            _ => unimplemented!(),
-        }
-    }
-
-    if !temp.is_empty() {
-        let num = temp.parse::<u32>().unwrap();
-        temp.clear();
-        tokens.push(Token::Number(num));
-    }
-
-    tokens
+#[derive(Debug, PartialEq)]
+pub enum LexError {
+    UnexpectedChar { ch: char, pos: usize },
+    NumberTooLarge { pos: usize },
 }
 
+pub fn lexer(input: &str) -> Result<Vec<Token>, LexError> {
+    let mut tokens = Vec::new();
+    let mut chars = input.char_indices().peekable();
+
+    while let Some(&(pos, ch)) = chars.peek() {
+        if ch.is_ascii_digit() {
+            let mut digits = String::new();
+            while let Some(&(_, d)) = chars.peek() {
+                if !d.is_ascii_digit() {
+                    break;
+                }
+                digits.push(d);
+                chars.next();
+            }
+            let n = digits
+                .parse::<u32>()
+                .map_err(|_| LexError::NumberTooLarge { pos })?;
+            tokens.push(Token::Number(n));
+        } else if ch == '+' {
+            tokens.push(Token::Plus);
+            chars.next();
+        } else if ch.is_whitespace() {
+            chars.next();
+        } else {
+            return Err(LexError::UnexpectedChar { ch, pos });
+        }
+    }
+
+    Ok(tokens)
+}
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     #[test]
-    fn test_addition() {
-        let input = "12+3";
-        let value = lexer(input);
-
+    fn lexes_multi_digit_number_plus_number() {
         assert_eq!(
-            value,
-            vec![Token::Number(12_u32), Token::Plus, Token::Number(3_u32)]
-        )
+            lexer("12+3"),
+            Ok(vec![Token::Number(12), Token::Plus, Token::Number(3)])
+        );
     }
 
     #[test]
-    fn test_add_two_values() {
-        let input = "1+2";
-        let value = lexer(input);
-
+    fn lexes_single_digit_addition() {
         assert_eq!(
-            value,
-            vec![Token::Number(1_u32), Token::Plus, Token::Number(2_u32)]
-        )
+            lexer("1+2"),
+            Ok(vec![Token::Number(1), Token::Plus, Token::Number(2)])
+        );
     }
 
     #[test]
-    fn test_with_no_operator() {
-        let input = "100";
-        let value = lexer(input);
-
-        assert_eq!(value, vec![Token::Number(100_u32)])
+    fn lexes_lone_number_without_operator() {
+        assert_eq!(lexer("100"), Ok(vec![Token::Number(100)]));
     }
 
     #[test]
-    fn test_with_an_empty_input() {
-        let input = "";
-        let value = lexer(input);
+    fn empty_input_gives_no_tokens() {
+        assert_eq!(lexer(""), Ok(vec![]));
+    }
+    #[test]
+    fn skips_whitespace() {
+        assert_eq!(
+            lexer("1 + 2"),
+            Ok(vec![Token::Number(1), Token::Plus, Token::Number(2)])
+        );
+    }
 
-        assert_eq!(value, vec![])
+    #[test]
+    fn rejects_unknown_character() {
+        assert_eq!(
+            lexer("1 $ 2"),
+            Err(LexError::UnexpectedChar { ch: '$', pos: 2 })
+        );
+    }
+
+    #[test]
+    fn rejects_huge_number() {
+        assert_eq!(
+            lexer("99999999999"),
+            Err(LexError::NumberTooLarge { pos: 0 })
+        );
     }
 }
