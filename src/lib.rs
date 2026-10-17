@@ -15,6 +15,11 @@ pub enum LexError {
     NumberTooLarge { pos: usize },
 }
 
+#[derive(Debug, PartialEq)]
+pub enum EvalError {
+    DivisionByZero,
+}
+
 pub fn lexer(input: &str) -> Result<Vec<Token>, LexError> {
     let mut tokens = Vec::new();
     let mut chars = input.char_indices().peekable();
@@ -60,7 +65,6 @@ pub fn lexer(input: &str) -> Result<Vec<Token>, LexError> {
 pub enum ParseError {
     UnexpectedToken(Token),
     UnexpectedEnd,
-    DivisionByZero,
     MissingClosingBracket, // add more as you need them
 }
 
@@ -68,6 +72,7 @@ pub enum ParseError {
 pub enum CalcError {
     Lex(LexError),
     Parse(ParseError),
+    Eval(EvalError),
 }
 
 impl From<LexError> for CalcError {
@@ -79,6 +84,12 @@ impl From<LexError> for CalcError {
 impl From<ParseError> for CalcError {
     fn from(e: ParseError) -> Self {
         CalcError::Parse(e)
+    }
+}
+
+impl From<EvalError> for CalcError {
+    fn from(e: EvalError) -> Self {
+        CalcError::Eval(e)
     }
 }
 
@@ -100,18 +111,19 @@ impl Parser {
         self.pos += 1;
     }
 
-    fn expr(&mut self) -> Result<i64, ParseError> {
-        let mut term = self.term()?;
+    // (10-4)/2
+    fn expr(&mut self) -> Result<Expr, ParseError> {
+        let mut term = self.term()?; // LEFT
 
         while let Some(token) = self.peek() {
             match token {
                 Token::Plus => {
                     self.advance();
-                    term += self.term()?;
+                    term = Expr::Binary(Box::new(term), Op::Add, Box::new(self.term()?));
                 }
                 Token::Subtract => {
                     self.advance();
-                    term -= self.term()?;
+                    term = Expr::Binary(Box::new(term), Op::Sub, Box::new(self.term()?));
                 }
                 _ => return Ok(term),
             }
@@ -120,22 +132,18 @@ impl Parser {
         Ok(term)
     }
 
-    fn term(&mut self) -> Result<i64, ParseError> {
-        let mut factor = self.unary()?;
+    fn term(&mut self) -> Result<Expr, ParseError> {
+        let mut factor = self.unary()?; // LEFT
 
         while let Some(token) = self.peek() {
             match token {
                 Token::Multiply => {
                     self.advance();
-                    factor *= self.unary()?;
+                    factor = Expr::Binary(Box::new(factor), Op::Mul, Box::new(self.unary()?));
                 }
                 Token::Divide => {
                     self.advance();
-                    let new_factor = self.unary()?;
-                    if new_factor == 0 {
-                        return Err(ParseError::DivisionByZero);
-                    }
-                    factor /= new_factor;
+                    factor = Expr::Binary(Box::new(factor), Op::Div, Box::new(self.unary()?));
                 }
                 _ => return Ok(factor),
             }
@@ -144,22 +152,22 @@ impl Parser {
         Ok(factor)
     }
 
-    fn unary(&mut self) -> Result<i64, ParseError> {
+    fn unary(&mut self) -> Result<Expr, ParseError> {
         match self.peek() {
             Some(Token::Subtract) => {
                 self.advance();
                 let value = self.unary()?;
-                Ok(-value)
+                Ok(Expr::Negate(Box::new(value)))
             }
             _ => self.factor(),
         }
     }
 
-    fn factor(&mut self) -> Result<i64, ParseError> {
+    fn factor(&mut self) -> Result<Expr, ParseError> {
         match self.peek().cloned() {
             Some(Token::Number(n)) => {
                 self.advance();
-                Ok(n)
+                Ok(Expr::Number(n))
             }
             Some(Token::OpenBracket) => {
                 self.advance(); // consume "("
@@ -180,8 +188,54 @@ impl Parser {
     }
 }
 
+pub fn eval(tree: Expr) -> Result<i64, EvalError> {
+    match tree {
+        Expr::Number(n) => Ok(n),
+        Expr::Negate(v) => {
+            let value = eval(*v)?;
+            Ok(-value)
+        }
+        Expr::Binary(l, op, r) => {
+            let left = eval(*l)?;
+            let right = eval(*r)?;
+
+            let calculation = match op {
+                Op::Add => left + right,
+                Op::Sub => left - right,
+                Op::Div => {
+                    if right == 0 {
+                        return Err(EvalError::DivisionByZero);
+                    }
+                    left / right
+                } // add divide by 0 check
+                Op::Mul => left * right,
+            };
+
+            Ok(calculation)
+        }
+    }
+}
+
 pub fn evaluate(input: &str) -> Result<i64, CalcError> {
-    Ok(Parser::new(lexer(input)?).expr()?)
+    let lexer_result = lexer(input)?;
+    let expr_tree = Parser::new(lexer_result).expr()?;
+
+    Ok(eval(expr_tree)?)
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Expr {
+    Number(i64),
+    Negate(Box<Expr>),
+    Binary(Box<Expr>, Op, Box<Expr>),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Op {
+    Add,
+    Sub,
+    Mul,
+    Div,
 }
 
 #[cfg(test)]
@@ -209,7 +263,18 @@ mod tests {
             Token::Divide,
             Token::Number(2),
         ]);
-        assert_eq!(parser.expr(), Ok(3_i64))
+
+        let expr = Expr::Binary(
+            Box::new(Expr::Binary(
+                Box::new(Expr::Number(10)),
+                Op::Sub,
+                Box::new(Expr::Number(4)),
+            )),
+            Op::Div,
+            Box::new(Expr::Number(2)),
+        );
+
+        assert_eq!(parser.expr(), Ok(expr))
     }
 
     #[test]
@@ -221,12 +286,24 @@ mod tests {
             Token::Multiply,
             Token::Number(4),
         ]);
-        assert_eq!(parser.expr(), Ok(14_i64))
+
+        // 2 + (3 * 4)
+        let expr = Expr::Binary(
+            Box::new(Expr::Number(2)),
+            Op::Add,
+            Box::new(Expr::Binary(
+                Box::new(Expr::Number(3)),
+                Op::Mul,
+                Box::new(Expr::Number(4)),
+            )),
+        );
+
+        assert_eq!(parser.expr(), Ok(expr))
     }
 
     #[test]
     fn parser_subtracts_after_division() {
-        // 10 - 4 / 2 = 10 - 2 = 8
+        // 10 - 4 / 2 = 10 - (4 / 2)
         let mut parser = Parser::new(vec![
             Token::Number(10),
             Token::Subtract,
@@ -234,12 +311,23 @@ mod tests {
             Token::Divide,
             Token::Number(2),
         ]);
-        assert_eq!(parser.expr(), Ok(8_i64))
+
+        let expr = Expr::Binary(
+            Box::new(Expr::Number(10)),
+            Op::Sub,
+            Box::new(Expr::Binary(
+                Box::new(Expr::Number(4)),
+                Op::Div,
+                Box::new(Expr::Number(2)),
+            )),
+        );
+
+        assert_eq!(parser.expr(), Ok(expr))
     }
 
     #[test]
     fn parser_subtracts_left_to_right() {
-        // (10 - 4) - 3 = 3, not 10 - (4 - 3) = 9
+        // (10 - 4) - 3, not 10 - (4 - 3)
         let mut parser = Parser::new(vec![
             Token::Number(10),
             Token::Subtract,
@@ -247,24 +335,43 @@ mod tests {
             Token::Subtract,
             Token::Number(3),
         ]);
-        assert_eq!(parser.expr(), Ok(3_i64))
+
+        let expr = Expr::Binary(
+            Box::new(Expr::Binary(
+                Box::new(Expr::Number(10)),
+                Op::Sub,
+                Box::new(Expr::Number(4)),
+            )),
+            Op::Sub,
+            Box::new(Expr::Number(3)),
+        );
+
+        assert_eq!(parser.expr(), Ok(expr))
     }
 
     #[test]
     fn parser_reads_single_number_as_factor() {
         let mut parser = Parser::new(vec![Token::Number(7)]);
 
-        assert_eq!(parser.factor(), Ok(7_i64))
+        assert_eq!(parser.factor(), Ok(Expr::Number(7)))
     }
 
     #[test]
     fn parser_multiplies_in_term() {
         let mut parser = Parser::new(vec![Token::Number(2), Token::Multiply, Token::Number(3)]);
-        assert_eq!(parser.term(), Ok(6_i64))
+
+        let expr = Expr::Binary(
+            Box::new(Expr::Number(2)),
+            Op::Mul,
+            Box::new(Expr::Number(3)),
+        );
+
+        assert_eq!(parser.term(), Ok(expr))
     }
 
     #[test]
     fn parser_divides_left_to_right() {
+        // (8 / 2) / 2
         let mut parser = Parser::new(vec![
             Token::Number(8),
             Token::Divide,
@@ -272,13 +379,18 @@ mod tests {
             Token::Divide,
             Token::Number(2),
         ]);
-        assert_eq!(parser.term(), Ok(2_i64))
-    }
 
-    #[test]
-    fn parser_rejects_division_by_zero() {
-        let mut parser = Parser::new(vec![Token::Number(7), Token::Divide, Token::Number(0)]);
-        assert_eq!(parser.term(), Err(ParseError::DivisionByZero))
+        let expr = Expr::Binary(
+            Box::new(Expr::Binary(
+                Box::new(Expr::Number(8)),
+                Op::Div,
+                Box::new(Expr::Number(2)),
+            )),
+            Op::Div,
+            Box::new(Expr::Number(2)),
+        );
+
+        assert_eq!(parser.term(), Ok(expr))
     }
 
     #[test]
@@ -357,7 +469,7 @@ mod tests {
     fn evaluate_surfaces_parse_errors() {
         assert_eq!(
             evaluate("1 / 0"),
-            Err(CalcError::Parse(ParseError::DivisionByZero))
+            Err(CalcError::Eval(EvalError::DivisionByZero))
         );
         assert_eq!(
             evaluate("(1 + 2"),
