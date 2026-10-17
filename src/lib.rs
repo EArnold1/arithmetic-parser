@@ -13,6 +13,18 @@ pub enum CalcError {
     Eval(EvalError),
 }
 
+impl std::fmt::Display for CalcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CalcError::Lex(e) => write!(f, "lex error: {e}"),
+            CalcError::Parse(e) => write!(f, "parse error: {e}"),
+            CalcError::Eval(e) => write!(f, "eval error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for CalcError {}
+
 impl From<LexError> for CalcError {
     fn from(e: LexError) -> Self {
         CalcError::Lex(e)

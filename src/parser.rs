@@ -22,6 +22,16 @@ pub enum ParseError {
     MissingClosingBracket,
 }
 
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseError::UnexpectedToken(t) => write!(f, "unexpected {t}"),
+            ParseError::UnexpectedEnd => write!(f, "unexpected end of input"),
+            ParseError::MissingClosingBracket => write!(f, "missing closing bracket"),
+        }
+    }
+}
+
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,

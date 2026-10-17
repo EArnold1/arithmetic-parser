@@ -3,6 +3,16 @@ use crate::parser::{Expr, Op};
 #[derive(Debug, PartialEq)]
 pub enum EvalError {
     DivisionByZero,
+    Overflow,
+}
+
+impl std::fmt::Display for EvalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EvalError::DivisionByZero => write!(f, "division by zero"),
+            EvalError::Overflow => write!(f, "arithmetic overflow"),
+        }
+    }
 }
 
 /// Evaluates an expression tree to its `i64` value.
@@ -14,31 +24,31 @@ pub enum EvalError {
 ///
 /// # Errors
 /// Returns `EvalError::DivisionByZero` if any division has a right-hand side
-/// that evaluates to `0`.
+/// that evaluates to `0`, and `EvalError::Overflow` if any step does not fit
+/// in an `i64`.
 pub fn eval(tree: Expr) -> Result<i64, EvalError> {
     match tree {
         Expr::Number(n) => Ok(n),
         Expr::Negate(v) => {
             let value = eval(*v)?;
-            Ok(-value)
+            value.checked_neg().ok_or(EvalError::Overflow)
         }
         Expr::Binary(l, op, r) => {
             let left = eval(*l)?;
             let right = eval(*r)?;
 
-            let calculation = match op {
-                Op::Add => left + right,
-                Op::Sub => left - right,
+            match op {
+                Op::Add => left.checked_add(right),
+                Op::Sub => left.checked_sub(right),
+                Op::Mul => left.checked_mul(right),
                 Op::Div => {
                     if right == 0 {
                         return Err(EvalError::DivisionByZero);
                     }
-                    left / right
+                    left.checked_div(right)
                 }
-                Op::Mul => left * right,
-            };
-
-            Ok(calculation)
+            }
+            .ok_or(EvalError::Overflow)
         }
     }
 }
@@ -109,5 +119,23 @@ mod tests {
         let expr = parser.parse().unwrap();
 
         assert_eq!(eval(expr), Err(EvalError::DivisionByZero))
+    }
+
+    #[test]
+    fn eval_reports_overflow_instead_of_panicking_or_wrapping() {
+        // i64::MAX + 1
+        let add = bin(num(i64::MAX), Op::Add, num(1));
+        // i64::MIN - 1
+        let sub = bin(num(i64::MIN), Op::Sub, num(1));
+        // i64::MAX * 2
+        let mul = bin(num(i64::MAX), Op::Mul, num(2));
+        // i64::MIN / -1
+        let div = bin(num(i64::MIN), Op::Div, neg(num(1)));
+        // -(i64::MIN)
+        let negate = neg(num(i64::MIN));
+
+        for tree in [add, sub, mul, div, negate] {
+            assert_eq!(eval(*tree), Err(EvalError::Overflow));
+        }
     }
 }

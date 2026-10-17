@@ -9,10 +9,37 @@ pub enum Token {
     Number(i64),
 }
 
+impl std::fmt::Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::Plus => write!(f, "'+'"),
+            Token::Subtract => write!(f, "'-'"),
+            Token::Divide => write!(f, "'/'"),
+            Token::Multiply => write!(f, "'*'"),
+            Token::OpenBracket => write!(f, "'('"),
+            Token::CloseBracket => write!(f, "')'"),
+            Token::Number(n) => write!(f, "number {n}"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum LexError {
     UnexpectedChar { ch: char, pos: usize },
     NumberTooLarge { pos: usize },
+}
+
+impl std::fmt::Display for LexError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LexError::UnexpectedChar { ch, pos } => {
+                write!(f, "unexpected character '{ch}' at position {pos}")
+            }
+            LexError::NumberTooLarge { pos } => {
+                write!(f, "number at position {pos} is too large")
+            }
+        }
+    }
 }
 
 pub fn lexer(input: &str) -> Result<Vec<Token>, LexError> {
