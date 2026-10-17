@@ -121,17 +121,17 @@ impl Parser {
     }
 
     fn term(&mut self) -> Result<i64, ParseError> {
-        let mut factor = self.factor()?;
+        let mut factor = self.unary()?;
 
         while let Some(token) = self.peek() {
             match token {
                 Token::Multiply => {
                     self.advance();
-                    factor *= self.factor()?;
+                    factor *= self.unary()?;
                 }
                 Token::Divide => {
                     self.advance();
-                    let new_factor = self.factor()?;
+                    let new_factor = self.unary()?;
                     if new_factor == 0 {
                         return Err(ParseError::DivisionByZero);
                     }
@@ -142,6 +142,17 @@ impl Parser {
         }
 
         Ok(factor)
+    }
+
+    fn unary(&mut self) -> Result<i64, ParseError> {
+        match self.peek() {
+            Some(Token::Subtract) => {
+                self.advance();
+                let value = self.unary()?;
+                Ok(-value)
+            }
+            _ => self.factor(),
+        }
     }
 
     fn factor(&mut self) -> Result<i64, ParseError> {
@@ -176,6 +187,16 @@ pub fn evaluate(input: &str) -> Result<i64, CalcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unary_minus_at_start_negates_number() {
+        assert_eq!(evaluate("-5"), Ok(-5));
+    }
+
+    #[test]
+    fn unary_minus_after_operator_negates_right_operand() {
+        assert_eq!(evaluate("3 * -2"), Ok(-6));
+    }
 
     #[test]
     fn parser_evaluates_brackets_first() {
